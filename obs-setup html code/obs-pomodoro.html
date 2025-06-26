@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>OBS Pomodoro</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    html,
+    body {
+      background: transparent;
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    body {
+      color: white;
+      font-family: "Segoe UI", Arial, sans-serif;
+      text-align: center;
+      padding: 10px;
+      border-radius: 10px;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+
+    .time {
+      font-size: 3vw;
+      font-weight: bold;
+      letter-spacing: 1px;
+      opacity: 0.9;
+      margin-bottom: 4px;
+    }
+
+    .session {
+      font-size: 3.2vw;
+      font-weight: bold;
+      color: #00ffcc;
+      text-shadow: 0 0 7px #00ffcc;
+      margin-top: 0;
+    }
+
+    .timer {
+      font-size: 6vw;
+      font-weight: bold;
+      letter-spacing: 1px;
+      margin: 6px 0;
+      text-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
+    }
+
+    #timeEstimate {
+      font-size: 1.5vw;
+      color: #aaa;
+      margin-top: 4px;
+    }
+
+    .log {
+      font-size: 1.5vw;
+      margin-top: 10px;
+      text-align: left;
+      white-space: pre-wrap;
+      background-color: rgba(255, 255, 255, 0.08);
+      padding: 5px;
+      border-radius: 5px;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+
+    .log:empty {
+      display: none;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin: 6px 0;
+      flex-wrap: wrap;
+    }
+
+    .controls button {
+      padding: 3px 8px;
+      font-size: 2vw;
+      font-weight: bold;
+      border: none;
+      border-radius: 5px;
+      background-color: #222;
+      color: #00ffcc;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+
+    .controls button:hover {
+      background-color: #00ffcc;
+      color: black;
+    }
+
+    .single-button {
+      margin-top: 6px;
+    }
+
+    @media (max-width: 300px) {
+      .timer {
+        font-size: 8vw;
+      }
+      .time,
+      .session {
+        font-size: 4vw;
+      }
+      .controls button {
+        font-size: 3vw;
+      }
+      .log {
+        font-size: 2vw;
+      }
+      #timeEstimate {
+        font-size: 2vw;
+      }
+    }
+  </style>
+</head>
+<body oncontextmenu="return false;">
+  <div class="time" id="currentTime">--:--</div>
+  <div class="session" id="sessionCount">Study 00/08</div>
+  <div class="timer" id="countdown">60:00</div>
+  <div id="timeEstimate">Est. finished: --:--</div>
+
+  <div class="controls">
+    <button onclick="previousSession()" aria-label="Previous Session">⏮ Prev</button>
+    <button onclick="nextSession()" aria-label="Next Session">Next ⏭</button>
+  </div>
+  <div class="controls single-button">
+    <button id="pauseResumeBtn" onclick="togglePause()" aria-label="Pause or Resume">⏸ Pause</button>
+  </div>
+
+  <div class="log" id="logDisplay"></div>
+  <audio id="beepSound" src="beep.mp3" preload="auto"></audio>
+
+  <script>
+    const workTime = 60 * 60;
+    const breakTime = 10 * 60;
+    let timeLeft = workTime;
+    let isWork = true;
+    let completedSessions = 0;
+    const maxSessions = 8;
+    let timer;
+    let sessionLogs = [];
+    let sessionStartTime = new Date();
+    let lastDate = new Date().toDateString();
+    let isPaused = false;
+
+    const beepSound = document.getElementById("beepSound");
+    const logDisplay = document.getElementById("logDisplay");
+    const pauseResumeBtn = document.getElementById("pauseResumeBtn");
+
+    // Load logs
+    const storedLogs = localStorage.getItem("pomodoroLogs");
+    if (storedLogs) {
+      sessionLogs = JSON.parse(storedLogs);
+    }
+
+    function updateDateTime() {
+      const now = new Date();
+      document.getElementById("currentTime").textContent = now.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+
+      if (now.toDateString() !== lastDate) {
+        completedSessions = 0;
+        sessionLogs = [];
+        localStorage.removeItem("pomodoroLogs");
+        updateSessionCount();
+        updateLogDisplay();
+        lastDate = now.toDateString();
+      }
+    }
+
+    function updateTimer() {
+      const minutes = Math.floor(timeLeft / 60)
+        .toString()
+        .padStart(2, "0");
+      const seconds = (timeLeft % 60).toString().padStart(2, "0");
+      document.getElementById("countdown").textContent = `${minutes}:${seconds}`;
+      updateEstimate();
+    }
+
+    function updateSessionCount() {
+      const type = isWork ? "Study" : "Break";
+      document.getElementById("sessionCount").textContent = `${type} ${completedSessions
+        .toString()
+        .padStart(2, "0")}/08`;
+    }
+
+    function updateLogDisplay() {
+      logDisplay.textContent = sessionLogs.join("\n");
+    }
+
+    function logSession(endTime) {
+      const date = new Date().toLocaleDateString("en-US");
+      const start = sessionStartTime.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const end = endTime.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const entry = `[${date}] Study ${completedSessions.toString().padStart(2, "0")}/08: ${start} - ${end}`;
+      sessionLogs.push(entry);
+      localStorage.setItem("pomodoroLogs", JSON.stringify(sessionLogs));
+      updateLogDisplay();
+    }
+
+    function updateEstimate() {
+      const remainingSessions = maxSessions - completedSessions;
+      if (remainingSessions <= 0) {
+        document.getElementById("timeEstimate").textContent = "Est. finished: Completed";
+        return;
+      }
+
+      const now = new Date();
+
+      // Total seconds left including current session + future full sessions (work+break)
+      // If current session is work, total sessions left is remainingSessions - 1 full sessions after this one
+      // If current session is break, still same formula (including current break time left)
+      const fullSessionLength = workTime + breakTime;
+      const totalSecondsLeft = timeLeft + (remainingSessions - 1) * fullSessionLength;
+
+      const finishTime = new Date(now.getTime() + totalSecondsLeft * 1000);
+
+      const options = { hour: "2-digit", minute: "2-digit", hour12: true };
+      const formattedTime = finishTime.toLocaleTimeString("en-US", options);
+
+      document.getElementById("timeEstimate").textContent = `Est. finished: ${formattedTime}`;
+    }
+
+    function startTimer() {
+      sessionStartTime = new Date();
+      clearInterval(timer);
+      isPaused = false;
+      pauseResumeBtn.textContent = "⏸ Pause";
+      timer = setInterval(() => {
+        if (!isPaused) {
+          timeLeft--;
+          updateTimer();
+
+          if (timeLeft <= 0) {
+            clearInterval(timer);
+            beepSound.currentTime = 0;
+            beepSound.play();
+
+            const sessionEnd = new Date();
+
+            if (isWork) {
+              completedSessions = Math.min(completedSessions + 1, maxSessions);
+              updateSessionCount();
+              logSession(sessionEnd);
+            }
+
+            isWork = !isWork;
+            timeLeft = isWork ? workTime : breakTime;
+            sessionStartTime = new Date();
+            updateTimer();
+            updateSessionCount();
+            startTimer();
+          }
+        }
+      }, 1000);
+    }
+
+    function nextSession() {
+      clearInterval(timer);
+      const sessionEnd = new Date();
+      if (isWork) {
+        completedSessions = Math.min(completedSessions + 1, maxSessions);
+        updateSessionCount();
+        logSession(sessionEnd);
+      }
+      isWork = !isWork;
+      timeLeft = isWork ? workTime : breakTime;
+      updateTimer();
+      updateSessionCount();
+      startTimer();
+    }
+
+    function previousSession() {
+      clearInterval(timer);
+      const sessionEnd = new Date();
+      if (!isWork && completedSessions > 0) {
+        completedSessions = Math.max(completedSessions - 1, 0);
+        updateSessionCount();
+        logSession(sessionEnd);
+      }
+      isWork = !isWork;
+      timeLeft = isWork ? workTime : breakTime;
+      updateTimer();
+      updateSessionCount();
+      startTimer();
+    }
+
+    function togglePause() {
+      isPaused = !isPaused;
+      pauseResumeBtn.textContent = isPaused ? "▶ Resume" : "⏸ Pause";
+    }
+
+    // Optional: Auto-pause when tab is inactive
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && !isPaused) {
+        togglePause();
+      }
+    });
+
+    document.body.addEventListener(
+      "click",
+      () => {
+        beepSound.play().catch(() => {});
+      },
+      { once: true }
+    );
+
+    updateDateTime();
+    updateTimer();
+    updateSessionCount();
+    updateLogDisplay();
+    startTimer();
+    setInterval(updateDateTime, 1000);
+  </script>
+</body>
+</html>
